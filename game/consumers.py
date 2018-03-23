@@ -1,22 +1,6 @@
-import re
-import logging
-from channels import Group
-from channels.sessions import channel_session
-from .models import Game, Cell
-from channels.auth import http_session_user, channel_session_user, channel_session_user_from_http
-log = logging.getLogger(__name__)
-from django.utils.decorators import method_decorator
 
-from channels.generic.websockets import JsonWebsocketConsumer
 
-#========================================
-#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#MOST OF THIS IS THE SAME AS THE TUTORIAL
-#PROBABLY CANT RUN I WILL TRY AND GET IT
-#WORKING WHEN I KNOW MORE ABOUT WHAT IS
-#NEEDED TO BE ADDED OR CHANGED
-#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#========================================
+from channels.generic.websocket import JsonWebsocketConsumer
 
 class LobbyConsumer(JsonWebsocketConsumer):
 
@@ -30,7 +14,6 @@ class LobbyConsumer(JsonWebsocketConsumer):
 		Called to return the list of groups to automatically add/remove
 		this connection to/from.
 		"""
-		print("adding to connection group lobby")
 		return ["lobby"]
 
 	def connect(self, message, **kwargs):
@@ -46,37 +29,15 @@ class LobbyConsumer(JsonWebsocketConsumer):
 		"""
 		channel_session_user = True
 
-		action = content['action'] #MADE SOME CHANGES HERE SO HOPEFULLY WONT BREAK
+		action = content['action']
 		if action == 'create_game':
-			return Game.create_new_game(self.message.user, content['cols'], content['rows'])
-			
-		if action == 'find_game':
-			return Game.get_available_games()
+			Game.create_new_game(self.message.user, content['cols'], content['rows'])
+			delete_all_user_ships(self.message.user)
 		
-		if action == 'create_board':
-			Cell.create_new_board(content['game_id'], content['rows'], content['cols'], content['p1_id'], content['p2_id'])
+		if action == 'join_game':
+			Game.add_p2(context['game_id'],self.message.user)
+			delete_all_user_ships(self.message.user)
 		
-		if action == 'place_ship':
-			Cell.set_cell_state(content['game_id'], content['rows'], content['cols'], content['player_id'], content['new_state'])
-		
-		if action == 'get_ships_list':
-			return Shipyard.get_all_ships()
-			
-		if action == 'create_user':
-			User.create_new_user(content['username'])
-		
-		if action == 'delete_user':
-			User.delete_user(content['user_id'])
-		
-		if action == 'add_user_ship':
-			User_Shipyard.add_user_ship(content['user_id'], content['ship_id'])
-		
-		if action == 'delete_user_ship':
-			User_Shipyard.delete_user_ship(content['user_id'], content['ship_id'])
-			
-		if action == 'get_user_shipyard_size':
-			return get_user_shipyard_size(content['user_id'])
-
 	def disconnect(self, message, **kwargs):
 		"""
 		Perform things on connection close
@@ -93,7 +54,7 @@ class GameConsumer(JsonWebsocketConsumer):
 		Called to return the list of groups to automatically add/remove
 		this connection to/from.
 		"""
-		return ["game-{0}".format(kwargs['game_id'])]
+		return ["game-{0}".format(kwargs['game_id']),"user-{0}".format(self.message.user)]
 
 	def connect(self, message, **kwargs):
 		"""
@@ -108,41 +69,69 @@ class GameConsumer(JsonWebsocketConsumer):
 		"""
 		channel_session_user = True
 		action = content['action']
-
-		if action == 'hit_cell': #should set a cell's state
-			Cell.set_cell_state(content['game_id'], content['row'], content['col'], content['player_id'], content['state'])
-
-		if action == 'check_cell': #should return the state of a cell
-			return Cell.get_cell_state(content['game_id'], content['row'], content['col'], content['player_id'])
-			
-		if action == 'get_turn': #should return the number of the player whose turn it is, 1 for player one, 2 for player 2
-			game = Game.get_game(content['game_id'])
-			return game.player_turn
-			
-		if action == 'end_turn': #ends the current turn and switches the current turn to the other player
-			Game.set_next_turn(content['game_id'])
-			
-		if action == 'get_winner': 
-		#can be used to check if a player has been declared as the winner, 0: no winner, 1:player 1 wins, 2: player 2 wins
-			game = Game.get_game(content['game_id'])
-			return game.winner
-			
-		if action == 'set_winner': #sets the winner of a game, 1 for player 1, 2 for player 2
-			Game.set_winner(content['game_id'], content['player_id'])
-			
-		if action == 'get_board_size': #returns the (row,column) dimensions of the board
-			game = Game.get_game(content['game_id'])
-			return (game.num_rows,game.num_cols)
-			
-		if action == 'get_ships_left':
-			game = Game.get_game(content['game_id'])
-			if game.p1 == content[player_id]:
-				return game.p1_ships_count
-			if game.p2 == content[player_id]:
-				return game.p2_ships_count
-				
-		if action == 'set_ships_left':
-			Game.set_ship_count(content['game_id'], content['player_id'], content['new_count'])
+		
+		if action == 'placeship':
+			game_id = content['game_id']
+			start_row = content['start_row']
+			start_col = content['start_col']
+			ship_id = content['ship_id']
+			game = Game.get_game(game_id)
+			ship = Shipyard.get_ship(ship_id)
+			if not Game.get_both_ready(game_id):
+				ship_count = User_Shipyard.get_user_shipyard_size(self.message.user)
+				if ship_count < game.max_ships:
+					if not User_Shipyard.contains_user_ship(self.message.user,ship_id):
+						User_Shipyard.add_user_ship(self.message.user,ship_id)
+						for i in range(0,ship.length):
+							x = i
+							y = 0
+							if content['vertical'] == true:
+								x = 0
+								y = i
+							Cell.set_cell_state(game_id, self.message.user, 1, start_row+y, start_col+x, '{0}'.format(ship_id))
+						Game.set_ship_count(game_id,self.message.user,ship_count+1)
+		
+		if action == 'ready_to_start':
+			set_ready(content['game_id'], self.message.user)
+		
+		if action == 'get_turn':
+			message = {'turn': '{0}'.format(Game.get_game(content['game_id']).player_turn)}
+			Group('user-{0}'.format(self.message.user)).send({'text': json.dumps(message)})
+		
+		if action == 'fire':
+			game_id = content['game_id']
+			row = content['row']
+			col = content['column']
+			game = Game.get_game(game_id)
+			opponent_id = game.p1
+			opponent_ship_count = game.p1_ship_count
+			player_num = Game.get_player_num(game_id,self.message.user)
+			if player_num == 1:
+				opponent_id = game.p2
+				opponent_ship_count = game.p2_ship_count
+			if player_num != 0:
+				if game.player_turn == player_num:
+					player_cell = Cell.get_cell(game_id, self.message.user, 2, row, col)
+					opponent_cell = Cell.get_cell(game_id, opponent_id, 1, row, col)
+					if player_cell.state == 'unknown':
+						opponent_cell_state = opponent_cell.state
+						if opponent_cell_state == 'sea':
+							Cell.set_cell_state(game_id, self.message.user, 2, row, col, 'miss')
+						else:
+							Cell.set_cell_state(game_id, self.message.user, 2, row, col, 'hit')
+							ship_id = int(opponent_cell_state)
+							User_Shipyard.inc_hit_count(opponent_id,ship_id)
+							ship_length = Shipyard.get_ship(ship_id).length
+							if ship_length == User_Shipyard.get_ship(opponent_id,ship_id).hit_count:
+								Game.set_ship_count(game_id, opponent_id, opponent_ship_count-1)
+								if opponent_ship_count == 1:
+									Battleships_User.inc_games_played(self.message.user)
+									Battleships_User.inc_games_played(opponent_id)
+									Battleships_User.inc_wins(self.message.user)
+									message = {'winner': '{0}'.format(self.message.user)}
+									Group('game-{0}'.format(game_id)).send({'text': json.dumps(message)})
+						Cell.set_cell_state(game_id, opponent_id, 1, row, col, opponent_cell_state+'-fired_at')
+						Game.set_next_turn(game_id)
 
 	def disconnect(self, message, **kwargs):
 		"""
