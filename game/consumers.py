@@ -115,21 +115,38 @@ class GameConsumer(JsonWebsocketConsumer):
 			start_row = content['start_row']
 			start_col = content['start_col']
 			ship_id = content['ship_id']
+			vertical = content['vertical']
 			game = Game.get_game(game_id)
 			ship = Shipyard.get_ship(ship_id)
 			if not Game.get_both_ready(game_id):
 				ship_count = User_Shipyard.get_user_shipyard_size(self.scope['user'])
 				if ship_count < game.max_ships:
 					if not User_Shipyard.contains_user_ship(self.scope['user'],ship_id):
-						User_Shipyard.add_user_ship(self.scope['user'].id,ship_id)
-						for i in range(0,ship.length):
-							x = i
-							y = 0
-							if content['vertical'] == 'true': #note bool passed as string due to bug in literal_eval
-								x = 0
-								y = i
-							Cell.set_cell_state(game_id, self.scope['user'], 1, start_row+y, start_col+x, '{0}'.format(ship_id))
-						Game.set_ship_count(game_id,self.scope['user'],ship_count+1)
+						safe = True
+						if vertical == 'true':
+							safe = start_row + ship.length < game.num_row
+						else:
+							safe = start_col + ship.length < game.num_cols
+						if safe:
+							User_Shipyard.add_user_ship(self.message.user,ship_id)
+							for i in range(0,ship.length):
+								x = i
+								y = 0
+								if vertical == 'true':
+									x = 0
+									y = i
+								if Cell.get_cell(game_id, self.message.user, 1, start_row+y, start_col+x) != 'sea':
+									safe = False
+						if safe:
+							User_Shipyard.add_user_ship(self.message.user,ship_id)
+							for i in range(0,ship.length):
+								x = i
+								y = 0
+								if vertical == 'true':
+									x = 0
+									y = i
+								Cell.set_cell_state(game_id, self.message.user, 1, start_row+y, start_col+x, '{0}'.format(ship_id))
+							Game.set_ship_count(game_id,self.message.user,ship_count+1)
 		
 		if action == 'remove_ship':
 			game_id = content['game_id']
