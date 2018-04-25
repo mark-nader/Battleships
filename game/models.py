@@ -39,7 +39,7 @@ class Game(models.Model):
 		return Game.objects.get(pk=game_id)
 
 	def create_new_game(user, cols, rows, max, ships, bot):
-		new_game = Game(p1=user, num_cols=cols, num_rows=rows, player_turn=1, p1_ship_count=max, p2_ship_count=max, max_ships=max, ships_of_size_1=ships[0], ships_of_size_2=ships[1], ships_of_size_3=ships[2], ships_of_size_4=ships[3], ships_of_size_5=ships[4], p1_ready=False, p2_ready=False, last_fired='( , )-hit_or_miss', winner=0, bot_game=bot)
+		new_game = Game(p1=user, num_cols=cols, num_rows=rows, player_turn=1, p1_ship_count=0, p2_ship_count=0, max_ships=max, ships_of_size_1=ships[0], ships_of_size_2=ships[1], ships_of_size_3=ships[2], ships_of_size_4=ships[3], ships_of_size_5=ships[4], p1_ready=False, p2_ready=False, last_fired='( , )-hit_or_miss', winner=0, bot_game=bot)
 		new_game.save()
 		return new_game
 	
@@ -172,7 +172,7 @@ class Cell(models.Model):
 	set = models.BooleanField(default=False)
 	
 	def get_cell(game_id, user, board_num, row, col): 
-		return Cell.objects.get(game_id=game_id, user_owner=user, board_type=board_num, x=col, y=row)
+		return Cell.objects.get(game=game_id, user_owner=user, board_type=board_num, x=col, y=row)
 	
 	def set_cell_state(game_id, user, board_num, row, col, new_state): 
 		Cell.objects.filter(game_id=game_id, user_owner=user, board_type=board_num, x=col, y=row).update(state=new_state)
@@ -204,7 +204,7 @@ class Bot_Moves(models.Model):
 	y = models.IntegerField(default=0)
 	outcome = models.CharField(max_length=20, default='miss')
 	
-	def add_Move(game_id,row,col,hit_or_miss):
+	def add_move(game_id,row,col,hit_or_miss):
 		Bot_Moves(game=Game.get_game(game_id),x=col,y=row,outcome=hit_or_miss).save()
 	
 	def check_fired_on(game_id,row,col):
@@ -223,9 +223,11 @@ class Bot_Moves(models.Model):
 		b_game = Game.get_game(game_id)
 		for col in range (0, b_game.num_cols):
 			for row in range (0, b_game.num_rows):
-				if (Cell.get_cell(game_id, b_game.p1, 2, row, col).state == 'sunk'):
-					Bot_Moves.objects.get(game=b_game,x=col,y=row).outcome='sunk'
-					Bot_Moves.objects.get(game=b_game,x=col,y=row).save()
+				if (Cell.get_cell(game_id, b_game.p2, 2, row, col).state == 'sunk'):
+					moves = Bot_Moves.objects.get(game=b_game,x=col,y=row)
+					moves.outcome='sunk'
+					moves.save()
+					print("whahey")
 	
 	def delete_game(game_id):
 		Bot_Moves.objects.filter(Game.get_game(game_id)).delete()
